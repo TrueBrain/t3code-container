@@ -1,0 +1,67 @@
+#!/bin/bash
+set -euo pipefail
+
+: "${GITHUB_USERNAME:?GITHUB_USERNAME is required}"
+PUID=${PUID:-1000}
+PGID=${PGID:-1000}
+
+user=${GITHUB_USERNAME,,}
+home=/home/$user
+
+as_user() {
+    setpriv --reuid="$PUID" --regid="$PGID" --init-groups env HOME="$home" "$@"
+}
+
+if ! getent group "$PGID" >/dev/null; then
+    groupadd -g "$PGID" "$user"
+fi
+if ! id "$user" >/dev/null 2>&1; then
+    useradd -u "$PUID" -g "$PGID" -d "$home" -M -s /bin/bash -p '*' "$user"
+fi
+echo "$user ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/t3code-container
+chmod 440 /etc/sudoers.d/t3code-container
+
+for dir in "$home" /workspace; do
+    mkdir -p "$dir"
+    if [ "$(stat -c %u:%g "$dir")" != "$PUID:$PGID" ]; then
+        chown "$PUID:$PGID" "$dir"
+    fi
+done
+
+cat > /etc/environment <<EOF
+PATH="$home/.local/bin:$home/.cargo/bin:$home/go/bin:$PATH"
+LANG="$LANG"
+NPM_CONFIG_PREFIX="$home/.local"
+CARGO_HOME="$home/.cargo"
+RUSTUP_HOME="$RUSTUP_HOME"
+EOF
+
+host_keys=$home/.local/state/t3code-container/ssh
+if ! compgen -G "$host_keys/ssh_host_*_key" >/dev/null; then
+    ssh-keygen -A
+    as_user install -d -m 700 "$host_keys"
+    cp /etc/ssh/ssh_host_* "$host_keys/"
+    chown "$PUID:$PGID" "$host_keys"/*
+fi
+install -m 600 -o root -g root "$host_keys"/ssh_host_*_key /etc/ssh/
+install -m 644 -o root -g root "$host_keys"/ssh_host_*_key.pub /etc/ssh/
+
+keys=$(mktemp)
+if curl -fsSL --max-time 15 "https://github.com/$GITHUB_USERNAME.keys" -o "$keys"; then
+    install -m 644 "$keys" "/etc/ssh/authorized_keys.d/$user"
+else
+    echo "warning: could not fetch SSH keys of GitHub user '$GITHUB_USERNAME'" >&2
+fi
+rm -f "$keys"
+
+mkdir -p /run/sshd
+/usr/sbin/sshd
+
+set -a
+. /etc/environment
+set +a
+
+cd /workspace
+exec setpriv --reuid="$PUID" --regid="$PGID" --init-groups \
+    env HOME="$home" USER="$user" LOGNAME="$user" SHELL=/bin/bash \
+    /usr/local/libexec/t3code-container/provision

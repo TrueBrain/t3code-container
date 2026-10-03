@@ -1,0 +1,28 @@
+#!/bin/bash
+set -uo pipefail
+
+if [ "$(id -u)" -eq 0 ]; then
+    echo "error: run update as your own user, not as root" >&2
+    exit 1
+fi
+
+status=0
+
+echo "Updating Claude Code ..."
+if [ -x "$HOME/.local/bin/claude" ]; then
+    claude update || status=1
+else
+    curl -fsSL https://claude.ai/install.sh | bash || status=1
+fi
+
+echo "Updating T3 Code ..."
+npm install -g --no-fund --no-audit t3@latest || status=1
+
+echo "Updating Playwright browsers ..."
+npx -y -p @playwright/mcp@latest playwright install chromium firefox || status=1
+
+if pkill -HUP -x -u "$(id -u)" t3code-serve; then
+    echo "Restarting T3 Code ..."
+fi
+
+exit $status

@@ -1,0 +1,27 @@
+#!/bin/bash
+set -uo pipefail
+
+cp -r --update=none /etc/skel/. /usr/local/share/t3code-container/home/. "$HOME/"
+
+if [ -d "$HOME/.ssh" ]; then
+    chmod -R go-rwx "$HOME/.ssh"
+fi
+
+if ! git config --global user.name >/dev/null || ! git config --global user.email >/dev/null; then
+    if profile=$(curl -fsSL --max-time 15 "https://api.github.com/users/$GITHUB_USERNAME"); then
+        git config --global user.name >/dev/null \
+            || git config --global user.name "$(jq -r 'if (.name // "") == "" then .login else .name end' <<<"$profile")"
+        git config --global user.email >/dev/null \
+            || git config --global user.email "$(jq -r '"\(.id)+\(.login)@users.noreply.github.com"' <<<"$profile")"
+    else
+        echo "warning: could not fetch GitHub profile of '$GITHUB_USERNAME'" >&2
+    fi
+fi
+
+update
+
+if ! jq -e '.mcpServers.playwright' "$HOME/.claude.json" >/dev/null 2>&1; then
+    claude mcp add --scope user playwright -- npx -y @playwright/mcp@latest --browser chromium --headless --isolated
+fi
+
+exec t3code-serve
