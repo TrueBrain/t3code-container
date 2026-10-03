@@ -1,0 +1,20 @@
+#!/bin/bash
+set -u
+
+child=
+stop_child() {
+    [ -n "$child" ] && kill -TERM -- "-$child" 2>/dev/null
+    wait "$child" 2>/dev/null
+}
+
+trap stop_child HUP
+trap 'stop_child; exit 0' TERM INT
+
+while true; do
+    setsid t3 serve --host 0.0.0.0 --port 3773 /workspace &
+    child=$!
+    wait "$child"
+    wait "$child" 2>/dev/null
+    echo "T3 Code stopped; restarting ..." >&2
+    sleep 1
+done
